@@ -6,7 +6,7 @@ from configparser import ConfigParser
 from mysql.connector import connect, Error
 
 from selenium import webdriver
-from selenium.webdriver import ChromeOptions
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
@@ -20,6 +20,8 @@ recovery_check_page_class = "N4lOwd"
 
 logger = logging.getLogger('google_bot')
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+
+debug = False
 
 
 class HaxException(Exception):
@@ -56,21 +58,23 @@ class DriveBot:
         self.table = table
         self.column = column
 
-        options = ChromeOptions()
-        options.add_argument(f'user-agent={user_agent}')
+        options = Options()
+        options.add_argument(f'--user-agent={user_agent}')
 
         prefs = {
             "download.prompt_for_download": False,
             "download.directory_upgrade": True
         }
         options.add_experimental_option('prefs', prefs)
-        options.add_argument('ignore-ssl-errors=yes')
-        options.add_argument('ignore-certificate-errors')
-        options.add_argument("headless")
+        options.add_argument('--ignore-ssl-errors=yes')
+        options.add_argument('--ignore-certificate-errors')
+        options.add_argument("--headless")
+        options.add_argument("window-size=1024,768")
+        options.add_argument("--no-sandbox")
         # options.add_argument("remote-debugging-port=9222")
+        options.add_argument('--disable-gpu')
         options.add_argument(f'download.prompt_for_download": True')
         self.driver = webdriver.Chrome(options=options, executable_path=driver_path)
-        # self.driver.set_window_size(1120, 550)
         # driver.set_window_position(-10000,0)
 
     def wait_by_id(self, i, t=5):
@@ -84,6 +88,8 @@ class DriveBot:
         return element
 
     def save_screenshot(self, file_name='error_screenshot.png'):
+        with open('error.html', 'w+') as f:
+            f.write(self.driver.page_source)
         self.driver.save_screenshot(os.path.join(base_path, file_name))
 
     def login(self):
@@ -159,17 +165,26 @@ class DriveBot:
         except OSError as ex:
             logger.info(ex)
 
+    def db_test(self):
+        logger.info(f"Running in Debugging mode")
+        table_fetch = f"SHOW TABLES FROM {database}"
+        self.cursor.execute(table_fetch)
+        table_query = [item for item in self.cursor.fetchall()]
+        print(table_fetch)
+        tables = [i.decode() if type(table_query[0]) == bytearray else i for i in table_query]
+        print(tables)
+
     def save_to_mysql(self):
         sess = self.get_session()
         cookies = format_cookies(sess)
         print(f"\nSaving into MYSQL DATABASE")
-        table_fetch = f"SHOW TABLES FROM {database}"
+        table_fetch = f"SHOW TABLES FROM {database};"
         self.cursor.execute(table_fetch)
-        table_query = [item for item in self.cursor.fetchall()[0]]
+        table_query = [item for item in self.cursor.fetchall()]
         tables = [i.decode() if type(table_query[0]) == bytearray else i for i in table_query]
 
         if self.table in tables:
-            self.cursor.execute(f"SELECT {self.column} FROM {self.table}")
+            self.cursor.execute(f"SELECT {self.column} FROM {self.table};")
             # current_data = set([i[0] for i in self.cursor.fetchall()])
 
             try:
@@ -193,6 +208,13 @@ class DriveBot:
             logger.info(f"\nTable named {self.table} does not exist")
             raise SystemExit(0)
 
+    def clear_table(self, table):
+        try:
+            clear_query = f"TRUNCATE TABLE {table};"
+            self.cursor.execute(clear_query)
+        except Exception as ex:
+            logger.info(f"Can't truncate given table: {ex}")
+
     def check_browser(self):
         self.driver.get("https://www.whatismybrowser.com/")
         self.save_screenshot(file_name='user_agent_test_screenshot.png')
@@ -213,6 +235,7 @@ if __name__ == '__main__':
         database = parser['MYSQL']['database']
         table_ = parser['MYSQL']['table']
         column_ = parser['MYSQL']['column']
+        table_to_clear = parser['MYSQL']['table_clear']
     except Exception as e:
         logger.info(f"MYSQL config broken!, {e}")
         raise SystemExit(0)
@@ -228,11 +251,17 @@ if __name__ == '__main__':
 
     bot = DriveBot(host, db_user, db_passwd, database, table_,
                    column_, username, password, video_info_url, test_video_url)
-    try:
-        if bot.login():
-            bot.save_session_to_file()
-            bot.save_to_mysql()
-        sleep(5)
-    except Exception as e:
-        logger.info(e)
+
+    if not debug:
+        try:
+            if bot.login():
+                bot.save_session_to_file()
+                bot.save_to_mysql()
+                bot.clear_table(table_to_clear)
+            sleep(5)
+        except Exception as e:
+            bot.close_driver()
+            logger.info(e)
+    else:
+        bot.db_test()
     bot.close_driver()
