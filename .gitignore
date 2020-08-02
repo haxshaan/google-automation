@@ -1,2 +1,5 @@
 # Project exclude paths
 /venv/
+chromedriver
+cookies.json
+get_video_info
