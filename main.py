@@ -6,7 +6,6 @@ from configparser import ConfigParser
 from mysql.connector import connect, Error
 
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver import ChromeOptions
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -57,7 +56,7 @@ class DriveBot:
         self.table = table
         self.column = column
 
-        options = webdriver.ChromeOptions()
+        options = ChromeOptions()
         options.add_argument(f'user-agent={user_agent}')
 
         prefs = {
