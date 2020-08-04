@@ -24,18 +24,21 @@ base_path = os.getcwd()
 parser = ConfigParser()
 parser.read('config.ini')
 
-try:
-    host = parser['MYSQL']['host']
-    port = parser['MYSQL']['port']
-    db_user = parser['MYSQL']['user']
-    db_passwd = parser['MYSQL']['password']
-    database = parser['MYSQL']['database']
-    table_ = parser['MYSQL']['table']
-    column_ = parser['MYSQL']['column']
-    table_to_clear = parser['MYSQL']['table_clear']
-except Exception as e:
-    logger.info(f"MYSQL config broken!, {e}")
-    raise SystemExit(0)
+databases = dict()
+
+db_list = [f'db{i}' for i in range(1, 10)]
+
+for i in db_list:
+    if i.upper() in parser:
+        try:
+            db = {'host': parser[i.upper()]['host'], 'port': parser[i.upper()]['port'],
+                  'db_user': parser[i.upper()]['user'], 'db_passwd': parser[i.upper()]['password'],
+                  'database': parser[i.upper()]['database'], 'table': parser[i.upper()]['table'],
+                  'column': parser[i.upper()]['column'], 'table_to_clear': parser[i.upper()]['table_clear']}
+            databases[i] = db
+        except Exception as e:
+            logger.info(f"MYSQL config broken!, {e}")
+            raise SystemExit(0)
 
 try:
     username = parser['G_DRIVE']['username']
@@ -135,26 +138,15 @@ def format_cookies(cookies):
 
 class DriveBot:
 
-    def __init__(self, hostname, db_username, db_password, db_name, table, column, u_name,
+    def __init__(self, u_name,
                  pass_w, video_info, test_video, user_agent=None, headless=False):
         logger.info("Initializing Hax0 DriveBot, please wait.")
-
-        try:
-            logger.info("Creating database connection.")
-            self.connection = connect(host=hostname, user=db_username, passwd=db_password, db=db_name)
-            # engine = create_engine(f"mysql+mysqlconnector://{user}:{passwd}@{host}:{port}/{database}")
-            self.cursor = self.connection.cursor(buffered=True)
-        except Error as ex:
-            print("Can't connect to database!, error received: ", ex)
-            raise SystemExit(0)
 
         self.url = login_url
         self.video_info_url = video_info
         self.test_video_url = test_video
         self.username = u_name
         self.password = pass_w
-        self.table = table
-        self.column = column
         self.cookies = None
 
         options = Options()
@@ -193,6 +185,21 @@ class DriveBot:
         options.add_argument(f'download.prompt_for_download": True')
         self.driver = webdriver.Chrome(options=options, executable_path=driver_path)
         # driver.set_window_position(-10000,0)
+
+    def db_init(self, hostname, db_username, db_password, db_name, table, column, table_clear):
+        try:
+            logger.info("Creating database connection.")
+            self.connection = connect(host=hostname, user=db_username, passwd=db_password, db=db_name)
+            # engine = create_engine(f"mysql+mysqlconnector://{user}:{passwd}@{host}:{port}/{database}")
+            self.cursor = self.connection.cursor(buffered=True)
+        except Error as ex:
+            print("Can't connect to database!, error received: ", ex)
+            raise SystemExit(0)
+
+        self.database = db_name
+        self.table = table
+        self.column = column
+        self.table_clear = table_clear
 
     def wait_by_id(self, i, t=5):
         condition = ec.presence_of_element_located((By.ID, i))
@@ -283,18 +290,16 @@ class DriveBot:
 
     def get_session(self):
         sleep(1)
-        print(f'Test url is: {self.test_video_url}')
         self.driver.get(self.test_video_url)
         self.save_screenshot('test_video_page.png')
         sleep(1)
-        print(f'Info url is: {self.video_info_url}')
         self.driver.get(self.video_info_url)
         self.save_screenshot('video_info.png')
 
         cookies = self.driver.get_cookies()
         with open(f'cookies.json', 'w+') as f:
             json.dump(cookies, f)
-        self.cookies = cookies
+        self.cookies = format_cookies(cookies)
 
     def save_session_to_file(self):
         session = format_cookies(self.cookies)
@@ -304,17 +309,20 @@ class DriveBot:
         except OSError as ex:
             logger.info(ex)
 
-    def db_test(self):
+    def db_test(self, d_b):
         logger.info(f"Running in Debugging mode")
-        self.driver.get('https://httpbin.org/ip')
+        query = f"""SHOW TABLES FROM {d_b}"""
+        self.cursor.execute(query)
+        table_query = [item for item in self.cursor.fetchall()]
+        tables = [i[0].decode() if type(i[0]) == bytearray else i[0] for i in table_query]
+        print(tables)
 
     def save_to_mysql(self):
-        cookies = format_cookies(self.cookies)
         print(f"\nSaving into MYSQL DATABASE")
-        table_fetch = f"""SHOW TABLES FROM {database};"""
+        table_fetch = f"""SHOW TABLES FROM {self.database};"""
         self.cursor.execute(table_fetch)
         table_query = [item for item in self.cursor.fetchall()]
-        tables = [i.decode()[0] if type(table_query[0]) == bytearray else i[0] for i in table_query]
+        tables = [i[0].decode() if type(i[0]) == bytearray else i[0] for i in table_query]
 
         if self.table in tables:
             column_fetch = f"""SELECT "{self.column}" FROM {self.table};"""
@@ -324,10 +332,10 @@ class DriveBot:
             try:
                 # delete_statement = f"TRUNCATE {self.table};"
                 # self.cursor.execute(delete_statement)
-                update_statement = f"""UPDATE {self.table} SET value="{cookies}" WHERE name="{self.column}";"""
+                update_statement = f"""UPDATE {self.table} SET value="{self.cookies}" WHERE name="{self.column}";"""
                 self.cursor.execute(update_statement)
 
-                self.clear_table(table_to_clear)
+                self.clear_table(self.table_clear)
 
             except Error as ex:
                 print('Error: ', ex)
@@ -366,9 +374,7 @@ class DriveBot:
 
 if __name__ == '__main__':
 
-    bot = DriveBot(hostname=host, db_username=db_user, db_password=db_passwd,
-                   db_name=database, table=table_, column=column_,
-                   u_name=username, pass_w=password, video_info=video_info_url,
+    bot = DriveBot(u_name=username, pass_w=password, video_info=video_info_url,
                    test_video=test_video_url, user_agent=None, headless=False)
 
     if not debug:
@@ -377,14 +383,29 @@ if __name__ == '__main__':
             if bot.login():
                 bot.get_session()
                 bot.save_session_to_file()
-                bot.save_to_mysql()
-            bot.close_driver()
+                bot.close_driver()
+                for db in databases:
+                    current_db = databases[db]
+
+                    bot.db_init(hostname=current_db['host'], db_username=current_db['db_user'],
+                                db_password=current_db['db_passwd'], db_name=current_db['database'],
+                                table=current_db['table'], column=current_db['column'],
+                                table_clear=current_db['table_to_clear'])
+                    bot.save_to_mysql()
+
         except Exception as e:
             bot.close_driver()
             logger.info(e)
     else:
-        bot.db_test()
-        bot.close_driver()
+        for db in databases:
+            current_db = databases[db]
+            bot.close_driver()
+            bot.db_init(hostname=current_db['host'], db_username=current_db['db_user'],
+                        db_password=current_db['db_passwd'], db_name=current_db['database'],
+                        table=current_db['table'], column=current_db['column'],
+                        table_clear=current_db['table_to_clear'])
+
+            bot.db_test(current_db['database'])
 
     if virtual:
         display.stop()
